@@ -8,8 +8,12 @@ import os
 from networks.point_net_encoder import PointNetfeat
 from networks.sdf_net_decoder import SDFNet
 from networks.autoencoder import AutoEncoder
-from networks import LATENT_CODE_SIZE
+from networks import LATENT_CODE_SIZE, device, POINT_DIM
 import pyrender
+
+CLAMP_DIST = 0.1
+SIGMA = 0.01
+
 
 class SDFSampleDataset(data.Dataset):
     def __init__(self, sdf_sample_dir, split_file_path, subsample=16384):
@@ -43,37 +47,48 @@ class SDFSampleDataset(data.Dataset):
 
         samples = torch.cat([sample_pos, sample_neg], 0)
 
-        return samples
+        return samples.view(samples.shape[1], samples.shape[0])
 
     def _remove_nans(self, tensor):
         tensor_nan = torch.isnan(tensor[:, 3])
         return tensor[~tensor_nan, :]
 
+
 if __name__ == '__main__':
     encoder = PointNetfeat(use_global_feat=True, feature_transform=False)
-    # decoder = SDFNet()
-    # model = AutoEncoder(encoder, decoder)
+    decoder = SDFNet()
+    model = AutoEncoder(encoder, decoder)
+
     #
-    # dataset = SDFSampleDataset('data/SdfSamples/ShapeNetV2/03001627/', 'test.json')
+    dataset = SDFSampleDataset('data/SdfSamples/ShapeNetV2/03001627/', 'test.json')
     # print(len(dataset))
     # for i in range(3):
     #     sample = dataset[i]
     #     print(sample.shape)
     #
-    # batch_size = 8
-    # train_data = data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    batch_size = 8
+    train_data = data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     #
-    # for i_batch, batch in enumerate(train_data):
-    #     num_pts = batch.shape[2]
-    #     latent_code, input_trans = encoder(batch)
-    #     latent_code = latent_code.view(-1, LATENT_CODE_SIZE, 1).repeat(1, 1, num_pts)
-    #     break
+    for i_batch, batch in enumerate(train_data):
+        batch = batch.to(device)  # [B, point_dim, N]
+        sdf_pred, input_trans, latent_code = model(batch)
+        sdf_gt = batch[:, -1, :].squeeze()
 
-    batch = torch.randn(8, 100, 4)
-    latent_code, input_trans = encoder(batch)
+        sdf_gt.clamp(-CLAMP_DIST, CLAMP_DIST)
+        sdf_pred.clamp(-CLAMP_DIST, CLAMP_DIST)
 
-    # latent_code = torch.randn(8, 128, 100)
-    # batch = torch.randn(8, 4, 100)
+        l1_loss = torch.mean(torch.abs(sdf_pred - sdf_gt))
+        latent_code_regulariser = (1 / SIGMA) * torch.mean(torch.norm(latent_code, dim=1))  # DeepSDF, eqn. 9
+        # PointNet eqn. 2
+        I = torch.eye(POINT_DIM)[None, :, :].to(device)
+        feature_transform_regulariser = \
+            torch.mean(torch.norm(torch.bmm(input_trans, input_trans.transpose(2, 1)) - I, dim=(1, 2)))
+
+        loss = l1_loss + latent_code_regulariser + feature_transform_regulariser
+        break
+
+    # latent_code = torch.randn(8, 100, 128).to(device)
+    # batch = torch.randn(8, 100, 4).to(device)
     # out = decoder(latent_code, batch)
 
     # try loading the data first

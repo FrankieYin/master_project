@@ -5,6 +5,7 @@ import torch.nn as nn
 
 LATENT_CODE_SIZE = 128
 POINT_DIM = 4
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class SavableModule(nn.Module):
     def __init__(self, filename):

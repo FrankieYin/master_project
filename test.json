@@ -1,0 +1,15 @@
+{
+  "ShapeNetV2": {
+    "03001627": [
+      "0test_obj_full",
+      "0test_obj_half",
+      "0test_obj_100k",
+      "0test_obj_50k",
+      "0test_obj_8k",
+      "00test_obj_500k",
+      "00test_obj_8k",
+      "surf_sdf"
+    ]
+  }
+}
+

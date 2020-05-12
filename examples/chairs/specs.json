@@ -1,6 +1,5 @@
 {
-  "Description" : [ "This experiment learns a shape representation for chairs ",
-                    "using data from ShapeNet version 2." ],
+  "Description" : "This experiment learns a shape representation for chairs using data from ShapeNet version 2.",
   "DataSource" : "data",
   "TrainSplit" : "examples/splits/sv2_chairs_train.json",
   "TestSplit" : "examples/splits/sv2_chairs_test.json",
@@ -34,7 +33,7 @@
       "Factor" : 0.5
     }],
   "SamplesPerScene" : 16384,
-  "ScenesPerBatch" : 64,
+  "ScenesPerBatch" : 8,
   "DataLoaderThreads" : 16,
   "ClampingDistance" : 0.1,
   "CodeRegularization" : true,

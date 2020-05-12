@@ -1,10 +1,13 @@
 import json
+import time
 
 import torch.nn as nn
 import torch
 import torch.utils.data as data
+import torch.optim as optim
 import numpy as np
 import os
+from tqdm import tqdm
 from networks.point_net_encoder import PointNetfeat
 from networks.sdf_net_decoder import SDFNet
 from networks.autoencoder import AutoEncoder
@@ -53,55 +56,52 @@ class SDFSampleDataset(data.Dataset):
         tensor_nan = torch.isnan(tensor[:, 3])
         return tensor[~tensor_nan, :]
 
+def criterion(sdf_gt, sdf_pred, input_trans, latent_code):
+    sdf_gt.clamp(-CLAMP_DIST, CLAMP_DIST)
+    sdf_pred.clamp(-CLAMP_DIST, CLAMP_DIST)
+
+    l1_loss = torch.mean(torch.abs(sdf_pred - sdf_gt))
+    latent_code_regulariser = (1 / SIGMA) * torch.mean(torch.norm(latent_code, dim=1))  # DeepSDF, eqn. 9
+    # PointNet eqn. 2
+    I = torch.eye(POINT_DIM)[None, :, :].to(device)
+    feature_transform_regulariser = \
+        torch.mean(torch.norm(torch.bmm(input_trans, input_trans.transpose(2, 1)) - I, dim=(1, 2)))
+
+    loss = l1_loss + latent_code_regulariser + feature_transform_regulariser
+    return loss
 
 if __name__ == '__main__':
     encoder = PointNetfeat(use_global_feat=True, feature_transform=False)
     decoder = SDFNet()
     model = AutoEncoder(encoder, decoder)
 
-    #
     dataset = SDFSampleDataset('data/SdfSamples/ShapeNetV2/03001627/', 'test.json')
-    # print(len(dataset))
-    # for i in range(3):
-    #     sample = dataset[i]
-    #     print(sample.shape)
-    #
+
     batch_size = 8
     train_data = data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-    #
-    for i_batch, batch in enumerate(train_data):
-        batch = batch.to(device)  # [B, point_dim, N]
-        sdf_pred, input_trans, latent_code = model(batch)
-        sdf_gt = batch[:, -1, :].squeeze()
+    optimiser = optim.Adam(model.parameters(), lr=1e-5)
+    num_epochs = 100
 
-        sdf_gt.clamp(-CLAMP_DIST, CLAMP_DIST)
-        sdf_pred.clamp(-CLAMP_DIST, CLAMP_DIST)
+    # training loop starts
+    training_loss = []
+    for epoch in range(1, num_epochs+1):
+        start_time = time.time()
+        running_loss = []
 
-        l1_loss = torch.mean(torch.abs(sdf_pred - sdf_gt))
-        latent_code_regulariser = (1 / SIGMA) * torch.mean(torch.norm(latent_code, dim=1))  # DeepSDF, eqn. 9
-        # PointNet eqn. 2
-        I = torch.eye(POINT_DIM)[None, :, :].to(device)
-        feature_transform_regulariser = \
-            torch.mean(torch.norm(torch.bmm(input_trans, input_trans.transpose(2, 1)) - I, dim=(1, 2)))
+        for i_batch, batch in tqdm(enumerate(train_data)):
+            optimiser.zero_grad()
+            batch = batch.to(device)  # [B, point_dim, N]
+            sdf_pred, input_trans, latent_code = model(batch)
+            sdf_gt = batch[:, -1, :].squeeze()
 
-        loss = l1_loss + latent_code_regulariser + feature_transform_regulariser
+            loss = criterion(sdf_gt, sdf_pred, input_trans, latent_code)
+            loss.backward()
+            optimiser.step()
+            running_loss.append(loss.item())
+
+        epoch_duration = time.time() - start_time
+        epoch_loss = np.mean(running_loss)
+        training_loss.append(epoch_loss)
+
+        print("Epoch {:d}, {:.1f}s. Loss: {:.8f}".format(epoch, epoch_duration, epoch_loss))
         break
-
-    # latent_code = torch.randn(8, 100, 128).to(device)
-    # batch = torch.randn(8, 100, 4).to(device)
-    # out = decoder(latent_code, batch)
-
-    # try loading the data first
-    # right now i dont care about testing set or train/test split just yet
-    # focus on this:
-    # load 100 training point into a point_cloud: [100, 4, num_points]
-    # instance_name = '1aa07508b731af79814e2be0234da26c'
-    # npz = np.load('data/SdfSamples/ShapeNetV2/03001627/{}.npz'.format(instance_name))
-    # pos = npz['pos'][:, :3]
-    # neg = npz['neg'][:, :3]
-    #
-    # points = np.vstack([pos, neg])
-    #
-    # scene = pyrender.Scene()
-    # scene.add(pyrender.Mesh.from_points(points))
-    # pyrender.Viewer(scene, use_raymond_lighting=True, point_size=2)

@@ -1,18 +1,17 @@
 import json
+import os
 import time
 
-import torch.nn as nn
-import torch
-import torch.utils.data as data
-import torch.optim as optim
 import numpy as np
-import os
+import torch
+import torch.optim as optim
+import torch.utils.data as data
 from tqdm import tqdm
+
+from networks import device, POINT_DIM
+from networks.autoencoder import AutoEncoder
 from networks.point_net_encoder import PointNetfeat
 from networks.sdf_net_decoder import SDFNet
-from networks.autoencoder import AutoEncoder
-from networks import LATENT_CODE_SIZE, device, POINT_DIM
-import pyrender
 
 CLAMP_DIST = 0.1
 SIGMA = 0.01
@@ -56,6 +55,7 @@ class SDFSampleDataset(data.Dataset):
         tensor_nan = torch.isnan(tensor[:, 3])
         return tensor[~tensor_nan, :]
 
+
 def criterion(sdf_gt, sdf_pred, input_trans, latent_code):
     sdf_gt.clamp(-CLAMP_DIST, CLAMP_DIST)
     sdf_pred.clamp(-CLAMP_DIST, CLAMP_DIST)
@@ -70,21 +70,54 @@ def criterion(sdf_gt, sdf_pred, input_trans, latent_code):
     loss = l1_loss + latent_code_regulariser + feature_transform_regulariser
     return loss
 
-if __name__ == '__main__':
+
+def save_checkpoint(epoch, model, optimiser, training_loss, filename='latest'):
+    torch.save({
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimiser_state_dict': optimiser.state_dict(),
+        'loss': training_loss,
+    }, 'checkpoints/{}.pth'.format(filename))
+
+
+def load_or_init_model(experiment, epoch=None):
+    experiment_path = f'checkpoints/{experiment}'
     encoder = PointNetfeat(use_global_feat=True, feature_transform=False)
     decoder = SDFNet()
     model = AutoEncoder(encoder, decoder)
+    optimiser = optim.Adam(model.parameters(), lr=1e-5)
+
+    if not epoch and not os.path.exists(experiment_path):
+        # init model
+        os.mkdir(experiment_path)
+        epoch = 1
+        training_loss = []
+        return model, optimiser, epoch, training_loss
+
+    elif not epoch:
+        # load the latest.pth
+        checkpoint = torch.load(f'{experiment_path}/latest.pth')
+    else:
+        checkpoint = torch.load(f'{experiment_path}/{epoch}.pth')
+
+    epoch = checkpoint['epoch']
+    training_loss = checkpoint['loss']
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimiser.load_state_dict(checkpoint['optimiser_state_dict'])
+
+    return model, optimiser, epoch, training_loss
+
+
+def train(experiment):
+    model, optimiser, start_epoch, training_loss = load_or_init_model(experiment)
 
     dataset = SDFSampleDataset('data/SdfSamples/ShapeNetV2/03001627/', 'test.json')
-
     batch_size = 8
     train_data = data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-    optimiser = optim.Adam(model.parameters(), lr=1e-5)
     num_epochs = 100
 
     # training loop starts
-    training_loss = []
-    for epoch in range(1, num_epochs+1):
+    for epoch in range(start_epoch, num_epochs + 1):
         start_time = time.time()
         running_loss = []
 
@@ -104,4 +137,13 @@ if __name__ == '__main__':
         training_loss.append(epoch_loss)
 
         print("Epoch {:d}, {:.1f}s. Loss: {:.8f}".format(epoch, epoch_duration, epoch_loss))
-        break
+
+        # always save the latest snapshot
+        save_checkpoint(epoch, model, optimiser, training_loss)
+        if epoch % 10 == 0:
+            save_checkpoint(epoch, model, optimiser, training_loss, filename=str(epoch))
+
+
+if __name__ == '__main__':
+    # model setup
+    model, optimiser, epoch, training_loss = load_or_init_model('initial_exp')

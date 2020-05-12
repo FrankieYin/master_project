@@ -1,13 +1,13 @@
-import torch
+import torch.nn as nn
 
 from networks import SavableModule, device, LATENT_CODE_SIZE
 from networks.point_net_encoder import PointNetfeat
 from networks.sdf_net_decoder import SDFNet
 
 
-class AutoEncoder(SavableModule):
+class AutoEncoder(nn.Module):
     def __init__(self, encoder: PointNetfeat, decoder: SDFNet):
-        super(AutoEncoder, self).__init__('autoencoder')
+        super(AutoEncoder, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
 
@@ -28,3 +28,6 @@ class AutoEncoder(SavableModule):
 
         return sdf_pred, input_trans, latent_code
 
+    @property
+    def device(self):
+        return next(self.parameters()).device

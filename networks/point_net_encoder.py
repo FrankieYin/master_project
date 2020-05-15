@@ -120,15 +120,15 @@ class PointNetfeat(nn.Module):
             self.fstn = STNkd(k=64)
 
         self.latent_layers = nn.Sequential(
-            nn.Linear(1024, 512),
-            nn.BatchNorm1d(512),
+            nn.Linear(1024, LATENT_CODE_SIZE),
+            # nn.BatchNorm1d(512),
             nn.ReLU(inplace=True),
-
-            nn.Linear(512, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(inplace=True),
-
-            nn.Linear(256, LATENT_CODE_SIZE),
+            #
+            # nn.Linear(512, 256),
+            # nn.BatchNorm1d(256),
+            # nn.ReLU(inplace=True),
+            #
+            # nn.Linear(256, LATENT_CODE_SIZE),
         )
 
     def forward(self, x):

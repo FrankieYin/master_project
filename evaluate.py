@@ -9,6 +9,7 @@ import os
 import trimesh
 
 import deep_sdf
+import deep_sdf.metrics
 import deep_sdf.workspace as ws
 
 

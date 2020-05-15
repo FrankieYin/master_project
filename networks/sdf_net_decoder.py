@@ -11,11 +11,10 @@ from tqdm import tqdm
 from networks import LATENT_CODE_SIZE, device
 # from train_autoencoder import SDFSampleDataset, save_checkpoint, SIGMA
 
-SDF_NET_BREADTH = 256
-
 class SDFNet(nn.Module):
     def __init__(self, latent_code_size=LATENT_CODE_SIZE):
         super(SDFNet, self).__init__()
+        SDF_NET_BREADTH = latent_code_size * 2
         # the decoder should only have xyz information, without sdf values
         self.layers1 = nn.Sequential(
             # nn.utils.weight_norm(nn.Linear(3 + latent_code_size, SDF_NET_BREADTH)),

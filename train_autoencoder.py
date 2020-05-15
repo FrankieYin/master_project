@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import time
 
@@ -6,13 +7,18 @@ import numpy as np
 import torch
 import torch.optim as optim
 import torch.utils.data as data
+from torch import nn
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
+import deep_sdf
 from networks import device, POINT_DIM
 from networks.autoencoder import AutoEncoder
-from networks.point_net_encoder import PointNetfeat
+from networks.point_net_encoder import SimplePointnet, PointNetfeat
 from networks.sdf_net_decoder import SDFNet
+import torch.utils.data as data_utils
+
+from train_deep_sdf import get_learning_rate_schedules, StepLearningRateSchedule
 
 CLAMP_DIST = 0.1
 SIGMA = 0.01
@@ -56,6 +62,9 @@ class SDFSampleDataset(data.Dataset):
         tensor_nan = torch.isnan(tensor[:, 3])
         return tensor[~tensor_nan, :]
 
+def adjust_learning_rate(lr_schedules, optimizer, epoch):
+    for i, param_group in enumerate(optimizer.param_groups):
+        param_group["lr"] = lr_schedules[i].get_learning_rate(epoch)
 
 def l1_loss(sdf_gt, sdf_pred):
     sdf_gt.clamp(-CLAMP_DIST, CLAMP_DIST)
@@ -79,10 +88,12 @@ def criterion(sdf_gt, sdf_pred, input_trans, latent_code):
     return loss
 
 
-def save_checkpoint(epoch, model, optimiser, training_loss, experiment, filename='latest'):
+def save_checkpoint(epoch, encoder, decoder, optimiser, training_loss, experiment, filename='latest'):
+    if not os.path.exists(f'checkpoints/{experiment}'): os.mkdir(f'checkpoints/{experiment}')
     torch.save({
         'epoch': epoch,
-        'model_state_dict': model.state_dict(),
+        'encoder_state_dict': encoder.state_dict(),
+        'decoder_state_dict': decoder.state_dict(),
         'optimiser_state_dict': optimiser.state_dict(),
         'loss': training_loss,
     }, f'checkpoints/{experiment}/{filename}.pth')
@@ -113,78 +124,94 @@ def load_or_init_model(experiment, epoch=None):
 
     return model, optimiser, epoch, training_loss
 
-
-def train(experiment, num_epochs=100):
-    model, optimiser, start_epoch, training_loss = load_or_init_model(experiment)
-
-    dataset = SDFSampleDataset('data/SdfSamples/ShapeNetV2/03001627/', 'test.json')
-    batch_size = 8
-    train_data = data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-
-    # training loop starts
-    for epoch in range(start_epoch, num_epochs + 1):
-        start_time = time.time()
-        running_loss = []
-
-        for i_batch, batch in tqdm(enumerate(train_data)):
-            optimiser.zero_grad()
-            batch = batch.to(device)  # [B, point_dim, N]
-            sdf_pred, input_trans, latent_code = model(batch)
-            sdf_gt = batch[:, -1, :].squeeze()
-
-            loss = criterion(sdf_gt, sdf_pred, input_trans, latent_code)
-            loss.backward()
-            optimiser.step()
-            running_loss.append(loss.item())
-
-        epoch_duration = time.time() - start_time
-        epoch_loss = np.mean(running_loss)
-        training_loss.append(epoch_loss)
-
-        print("Epoch {:d}, {:.1f}s. Loss: {:.8f}".format(epoch, epoch_duration, epoch_loss))
-
-        # always save the latest snapshot
-        save_checkpoint(epoch, model, optimiser, training_loss, experiment)
-        if epoch % 10 == 0:
-            save_checkpoint(epoch, model, optimiser, training_loss, experiment, filename=str(epoch))
-
-def plot_loss(experiment):
+def plot_loss(experiment, epoch=None):
+    latest = 'latest'
     experiment_path = f'checkpoints/{experiment}'
-    checkpoint = torch.load(f'{experiment_path}/latest.pth')
+    checkpoint = torch.load(f'{experiment_path}/{epoch if epoch else latest}.pth')
     loss = checkpoint['loss']
     plt.plot(loss)
     plt.show()
 
-if __name__ == '__main__':
-    experiment = '5_samples_latent_128_no_reg'
+def train_autoencoder(experiment):
+    specs = json.load(open('examples/chairs/specs.json'))
+    lr_schedules = get_learning_rate_schedules(specs)
+    latent_size = 128
+    point_dim = 4
+    hidden_dim = latent_size * 2
+    num_samp_per_scene = 16384
+    scene_per_batch = 5
+    code_bound = 1
+    clamp_dist = 0.1
+    code_reg_lambda = 1e-4
+
+    encoder = SimplePointnet(c_dim=latent_size, dim=point_dim).to('cuda')
+    decoder = SDFNet(latent_size).to('cuda')
+
+    split_file = json.load(open('5_sample.json'))
+    sdf_dataset = deep_sdf.data.SDFSamples(
+        'data', split_file, subsample=num_samp_per_scene, load_ram=False  # num_samp_per_scene (1 scene = 1 shape)
+    )
+    sdf_loader = data_utils.DataLoader(
+        sdf_dataset,
+        batch_size=scene_per_batch,  # scene_per_batch
+        shuffle=True,
+        num_workers=0,  # num_data_loader_threads
+        drop_last=True,
+    )
+    num_scenes = len(sdf_dataset)
+
+    loss_l1 = torch.nn.L1Loss(reduction="sum")  # TODO: why sum?
+    optimizer_all = torch.optim.Adam(
+        [
+            {
+                "params": decoder.parameters(),
+                "lr": lr_schedules[0].get_learning_rate(0),
+            },
+            {
+                "params": encoder.parameters(),
+                "lr": lr_schedules[1].get_learning_rate(0),
+            },
+        ]
+    )
+
+    start_epoch = 1
     num_epochs = 500
+    batch_split = 1
 
-    encoder = PointNetfeat(use_global_feat=True, feature_transform=False)
-    decoder = SDFNet()
-    model = AutoEncoder(encoder, decoder)
-    optimiser = optim.Adam(model.parameters(), lr=1e-5)
-    # model, optimiser, start_epoch, training_loss = load_or_init_model(experiment)
-    dataset = SDFSampleDataset('data/SdfSamples/ShapeNetV2/03001627/', '5_sample.json')
-    batch_size = 5
-    train_data = data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-
-    # training loop starts
     training_loss = []
-    for epoch in range(1, num_epochs + 1):
+    for epoch in range(start_epoch, num_epochs + 1):
         start_time = time.time()
         running_loss = []
+        adjust_learning_rate(lr_schedules, optimizer_all, epoch)
+        for sdf_data, indices in sdf_loader:
+            optimizer_all.zero_grad()
+            sdf_data = sdf_data.to('cuda')
+            batch_vecs = encoder(sdf_data)
+            batch_vecs = batch_vecs.view(-1, 1, latent_size).repeat(1, num_samp_per_scene, 1).view(-1, latent_size)
 
-        for i_batch, batch in tqdm(enumerate(train_data)):
-            optimiser.zero_grad()
-            batch = batch.to(device)  # [B, point_dim, N]
-            sdf_pred, input_trans, latent_code = model(batch)
-            sdf_gt = batch[:, -1, :].squeeze()
+            sdf_data = sdf_data.reshape(-1, 4)
+            num_sdf_samples = sdf_data.shape[0]
+            sdf_data.requires_grad = False
+            xyz = sdf_data[:, 0:3]
+            sdf_gt = sdf_data[:, 3].unsqueeze(1)
+            sdf_gt = torch.clamp(sdf_gt, -clamp_dist, clamp_dist)
+            # indices = indices.unsqueeze(-1).repeat(1, num_samp_per_scene).view(-1).to('cuda')
+            # batch_vecs = lat_vecs(indices) # [B*N, latent_size]
+            input = torch.cat([batch_vecs, xyz], dim=1)
 
-            loss = l1_loss(sdf_gt, sdf_pred) # TODO: experiment with only the l1 loss
-            loss += SIGMA**2 * min(1, epoch / 100) * torch.mean(torch.norm(latent_code, dim=1))
-            loss.backward()
-            optimiser.step()
-            running_loss.append(loss.item())
+            # NN optimization
+            pred_sdf = decoder(input)
+            # pred_sdf = decoder(batch_vecs, xyz)
+            pred_sdf = torch.clamp(pred_sdf, -clamp_dist, clamp_dist)
+
+            batch_loss = loss_l1(pred_sdf, sdf_gt) / num_sdf_samples
+            l2_size_loss = torch.sum(torch.norm(batch_vecs, dim=1))
+            reg_loss = (code_reg_lambda * min(1, epoch / 100) * l2_size_loss) / num_sdf_samples
+            batch_loss += reg_loss
+            batch_loss.backward()
+            optimizer_all.step()
+
+            running_loss.append(batch_loss.item())
 
         epoch_duration = time.time() - start_time
         epoch_loss = np.mean(running_loss)
@@ -192,11 +219,11 @@ if __name__ == '__main__':
 
         print("Epoch {:d}, {:.1f}s. Loss: {:.8f}".format(epoch, epoch_duration, epoch_loss))
 
-        if epoch_loss < 0.02:
-            save_checkpoint(epoch, model, optimiser, training_loss, experiment, filename='sub002')
-
         # always save the latest snapshot
-        save_checkpoint(epoch, model, optimiser, training_loss, experiment)
+        # save_checkpoint(epoch, decoder, optimizer_all, lat_vecs, training_loss, experiment)
         if epoch % 100 == 0:
-            save_checkpoint(epoch, model, optimiser, training_loss, experiment, filename=str(epoch))
+            save_checkpoint(epoch, encoder, decoder, optimizer_all, training_loss, experiment, filename=str(epoch))
 
+if __name__ == '__main__':
+    # train_autoencoder('train_autoencoder')
+    plot_loss('train_autoencoder', epoch=500)

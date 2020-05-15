@@ -87,17 +87,6 @@ if __name__ == '__main__':
     code_reg_lambda = 1e-4
 
     decoder = SDFNet(latent_size).to('cuda')
-
-    # decoder = Decoder(latent_size=latent_size,
-    #                   dims=[hidden_dim for _ in range(8)],
-    #                   dropout=list(range(8)),
-    #                   dropout_prob=0.2,
-    #                   norm_layers=list(range(8)),
-    #                   latent_in=[4],
-    #                   weight_norm=True,
-    #                   xyz_in_all=False,
-    #                   use_tanh=False,
-    #                   latent_dropout=False).to('cuda')
     split_file = json.load(open('5_sample.json'))
 
     checkpoint = torch.load(f'{experiment_path}/500.pth')
@@ -107,7 +96,8 @@ if __name__ == '__main__':
     shape_filenames = [f'data/SdfSamples/ShapeNetV2/03001627/{shape_name}.npz' for shape_name in shape_names]
     random.shuffle(shape_filenames)
 
-    mesh_to_reconstruct = shape_filenames[0]
+    # mesh_to_reconstruct = shape_filenames[0]
+    mesh_to_reconstruct = 'data/SdfSamples/ShapeNetV2/03001627/117930a8f2e37f9b707cdefe012d0353.npz'
     npz = np.load(mesh_to_reconstruct)
     pos_tensor = torch.from_numpy(npz["pos"])
     neg_tensor = torch.from_numpy(npz["neg"])

@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import matplotlib.pyplot as plt
-
+from tqdm import tqdm
 
 import deep_sdf
 from train_deep_sdf import get_learning_rate_schedules
@@ -54,17 +54,6 @@ def train_decoder():
 
     decoder = SDFNet(latent_size).to('cuda')
 
-    # decoder = Decoder(latent_size=latent_size,
-    #                   dims=[hidden_dim for _ in range(8)],
-    #                   dropout=list(range(8)),
-    #                   dropout_prob=0.2,
-    #                   norm_layers=list(range(8)),
-    #                   latent_in=[4],
-    #                   weight_norm=True,
-    #                   xyz_in_all=False,
-    #                   use_tanh=False,
-    #                   latent_dropout=False).to('cuda')
-
     split_file = json.load(open('5_sample.json'))
     sdf_dataset = deep_sdf.data.SDFSamples(
         'data', split_file, subsample=num_samp_per_scene, load_ram=False  # num_samp_per_scene (1 scene = 1 shape)
@@ -104,7 +93,7 @@ def train_decoder():
     batch_split = 1
 
     training_loss = []
-    for epoch in range(start_epoch, num_epochs + 1):
+    for epoch in tqdm(range(start_epoch, num_epochs + 1)):
         start_time = time.time()
         running_loss = []
         adjust_learning_rate(lr_schedules, optimizer_all, epoch)
@@ -148,7 +137,7 @@ def train_decoder():
             save_checkpoint(epoch, decoder, optimizer_all, lat_vecs, training_loss, experiment, filename=str(epoch))
 
 if __name__ == '__main__':
-    # train_decoder()
+    train_decoder()
     plot_loss('train_decoder', 500)
 
 

@@ -14,6 +14,7 @@ from train_deep_sdf import get_learning_rate_schedules
 from networks.deep_sdf_decoder import Decoder
 from networks.sdf_net_decoder import SDFNet
 import torch.utils.data as data_utils
+from train_autoencoder import SDFSampleDataset
 
 
 def adjust_learning_rate(lr_schedules, optimizer, epoch):
@@ -31,14 +32,15 @@ def save_checkpoint(epoch, decoder, optimiser, lat_vecs, training_loss, experime
         'loss': training_loss,
     }, f'checkpoints/{experiment}/{filename}.pth')
 
-def plot_loss(experiment):
+def plot_loss(experiment, epoch=None):
+    latest = 'latest'
     experiment_path = f'checkpoints/{experiment}'
-    checkpoint = torch.load(f'{experiment_path}/latest.pth')
+    checkpoint = torch.load(f'{experiment_path}/{epoch if epoch else latest}.pth')
     loss = checkpoint['loss']
     plt.plot(loss)
     plt.show()
 
-def train():
+def train_decoder():
     experiment = 'train_decoder'
     specs = json.load(open('examples/chairs/specs.json'))
     lr_schedules = get_learning_rate_schedules(specs)
@@ -50,18 +52,19 @@ def train():
     clamp_dist = 0.1
     code_reg_lambda = 1e-4
 
-    # decoder = SDFNet(latent_size)
+    decoder = SDFNet(latent_size).to('cuda')
 
-    decoder = Decoder(latent_size=latent_size,
-                      dims=[hidden_dim for _ in range(8)],
-                      dropout=list(range(8)),
-                      dropout_prob=0.2,
-                      norm_layers=list(range(8)),
-                      latent_in=[4],
-                      weight_norm=True,
-                      xyz_in_all=False,
-                      use_tanh=False,
-                      latent_dropout=False).to('cuda')
+    # decoder = Decoder(latent_size=latent_size,
+    #                   dims=[hidden_dim for _ in range(8)],
+    #                   dropout=list(range(8)),
+    #                   dropout_prob=0.2,
+    #                   norm_layers=list(range(8)),
+    #                   latent_in=[4],
+    #                   weight_norm=True,
+    #                   xyz_in_all=False,
+    #                   use_tanh=False,
+    #                   latent_dropout=False).to('cuda')
+
     split_file = json.load(open('5_sample.json'))
     sdf_dataset = deep_sdf.data.SDFSamples(
         'data', split_file, subsample=num_samp_per_scene, load_ram=False  # num_samp_per_scene (1 scene = 1 shape)
@@ -70,7 +73,7 @@ def train():
         sdf_dataset,
         batch_size=scene_per_batch,  # scene_per_batch
         shuffle=True,
-        num_workers=4,  # num_data_loader_threads
+        num_workers=0,  # num_data_loader_threads
         drop_last=True,
     )
 
@@ -121,9 +124,10 @@ def train():
 
             # NN optimization
             pred_sdf = decoder(input)
+            # pred_sdf = decoder(batch_vecs, xyz)
             pred_sdf = torch.clamp(pred_sdf, -clamp_dist, clamp_dist)
 
-            batch_loss = loss_l1(pred_sdf, sdf_gt.to('cuda')) / num_sdf_samples
+            batch_loss = loss_l1(pred_sdf, sdf_gt) / num_sdf_samples
             l2_size_loss = torch.sum(torch.norm(batch_vecs, dim=1))
             reg_loss = (code_reg_lambda * min(1, epoch / 100) * l2_size_loss) / num_sdf_samples
             batch_loss += reg_loss
@@ -139,13 +143,13 @@ def train():
         print("Epoch {:d}, {:.1f}s. Loss: {:.8f}".format(epoch, epoch_duration, epoch_loss))
 
         # always save the latest snapshot
-        save_checkpoint(epoch, decoder, optimizer_all, lat_vecs, training_loss, experiment)
+        # save_checkpoint(epoch, decoder, optimizer_all, lat_vecs, training_loss, experiment)
         if epoch % 100 == 0:
             save_checkpoint(epoch, decoder, optimizer_all, lat_vecs, training_loss, experiment, filename=str(epoch))
 
 if __name__ == '__main__':
-    # plot_loss('train_decoder')
-    train()
+    # train_decoder()
+    plot_loss('train_decoder', 500)
 
 
 

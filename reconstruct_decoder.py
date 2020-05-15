@@ -6,6 +6,8 @@ import numpy as np
 
 import deep_sdf
 from networks.deep_sdf_decoder import Decoder
+from networks.sdf_net_decoder import SDFNet
+
 
 def reconstruct(
     decoder,
@@ -84,19 +86,21 @@ if __name__ == '__main__':
     clamp_dist = 0.1
     code_reg_lambda = 1e-4
 
-    decoder = Decoder(latent_size=latent_size,
-                      dims=[hidden_dim for _ in range(8)],
-                      dropout=list(range(8)),
-                      dropout_prob=0.2,
-                      norm_layers=list(range(8)),
-                      latent_in=[4],
-                      weight_norm=True,
-                      xyz_in_all=False,
-                      use_tanh=False,
-                      latent_dropout=False).to('cuda')
+    decoder = SDFNet(latent_size).to('cuda')
+
+    # decoder = Decoder(latent_size=latent_size,
+    #                   dims=[hidden_dim for _ in range(8)],
+    #                   dropout=list(range(8)),
+    #                   dropout_prob=0.2,
+    #                   norm_layers=list(range(8)),
+    #                   latent_in=[4],
+    #                   weight_norm=True,
+    #                   xyz_in_all=False,
+    #                   use_tanh=False,
+    #                   latent_dropout=False).to('cuda')
     split_file = json.load(open('5_sample.json'))
 
-    checkpoint = torch.load(f'{experiment_path}/latest.pth')
+    checkpoint = torch.load(f'{experiment_path}/500.pth')
     decoder.load_state_dict(checkpoint['model_state_dict'])
 
     shape_names = split_file['ShapeNetV2']['03001627']

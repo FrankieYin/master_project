@@ -31,7 +31,7 @@ class SDFSampleDataset(data.Dataset):
     def __getitem__(self, idx):
         filename = os.path.join(self.sdf_sample_dir, self.split_file[idx] + '.npz')
         sample = self._unpack_sdf_samples(filename, self.subsample)
-        return sample
+        return sample, idx
 
     def _unpack_sdf_samples(self, filename, subsample):
         npz = np.load(filename)

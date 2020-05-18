@@ -1,8 +1,11 @@
 import json
+import os
 import random
+import time
 
 import torch
 import numpy as np
+from tqdm import tqdm
 
 import deep_sdf
 from networks.deep_sdf_decoder import Decoder
@@ -88,36 +91,54 @@ if __name__ == '__main__':
     clamp_dist = 0.1
     code_reg_lambda = 1e-4
 
+    if not os.path.exists(f'{experiment_path}/reconstructions'):
+        os.mkdir(f'{experiment_path}/reconstructions')
+
+    if not os.path.exists(f'{experiment_path}/latents'):
+        os.mkdir(f'{experiment_path}/latents')
+
     encoder = SimplePointnet(c_dim=latent_size, dim=point_dim).to('cuda')
     decoder = SDFNet(latent_size).to('cuda')
 
-    split_file = json.load(open('5_sample.json'))
+    split_file = json.load(open('examples/splits/sv2_chairs_test3.json'))
 
-    checkpoint = torch.load(f'{experiment_path}/500.pth')
+    checkpoint = torch.load(f'{experiment_path}/latest.pth')
     encoder.load_state_dict(checkpoint['encoder_state_dict'])
     decoder.load_state_dict(checkpoint['decoder_state_dict'])
 
     shape_names = split_file['ShapeNetV2']['03001627']
-    shape_filenames = [f'data/SdfSamples/ShapeNetV2/03001627/{shape_name}.npz' for shape_name in shape_names]
-    random.shuffle(shape_filenames)
+    random.shuffle(shape_names)
 
-    mesh_to_reconstruct = shape_filenames[0]
-    npz = np.load(mesh_to_reconstruct)
-    pos_tensor = torch.from_numpy(npz["pos"])
-    neg_tensor = torch.from_numpy(npz["neg"])
+    start_time = time.time()
+    mesh_count = 0
+    for shape_name in tqdm(shape_names):
+        if os.path.exists(f'{experiment_path}/reconstructions/{shape_name}.ply'): continue
 
-    data_sdf = [pos_tensor, neg_tensor]
-    data_sdf[0] = data_sdf[0][torch.randperm(data_sdf[0].shape[0])]
-    data_sdf[1] = data_sdf[1][torch.randperm(data_sdf[1].shape[0])]
-    data_sdf = torch.cat(data_sdf, dim=0).unsqueeze(0).to('cuda') # [1, N, point_dim]
+        mesh_to_reconstruct = f'data/SdfSamples/ShapeNetV2/03001627/{shape_name}.npz'
+        mesh_count += 1
+        npz = np.load(mesh_to_reconstruct)
+        pos_tensor = torch.from_numpy(npz["pos"])
+        neg_tensor = torch.from_numpy(npz["neg"])
 
-    with torch.no_grad():
-        encoder.eval()
-        latent = encoder(data_sdf)
-        print("creating mesh")
-        decoder.eval()
-        deep_sdf.mesh.create_mesh(
-            decoder, latent, f'{experiment_path}/mesh', N=256, max_batch=int(2 ** 18)
-        )
+        data_sdf = [pos_tensor, neg_tensor]
+        data_sdf[0] = data_sdf[0][torch.randperm(data_sdf[0].shape[0])]
+        data_sdf[1] = data_sdf[1][torch.randperm(data_sdf[1].shape[0])]
+        data_sdf = torch.cat(data_sdf, dim=0).unsqueeze(0).to('cuda') # [1, N, point_dim]
 
-    torch.save(latent, f'{experiment_path}/latent.pth')
+        with torch.no_grad():
+            encoder.eval()
+            decoder.eval()
+            latent = encoder(data_sdf)
+            try:
+                deep_sdf.mesh.create_mesh(
+                    decoder, latent, f'{experiment_path}/reconstructions/{shape_name}', N=256, max_batch=int(2 ** 18)
+                )
+            except RuntimeError as e:
+                # print(e)
+                continue
+
+        torch.save(latent, f'{experiment_path}/latents/{shape_name}.pth')
+    reconstruct_duration = time.time() - start_time
+    print(f'Total mesh: {mesh_count}')
+    print(f'Total time: {reconstruct_duration}')
+    print(f'avg. time/mesh: {reconstruct_duration/mesh_count}')

@@ -137,8 +137,8 @@ def train_decoder():
             save_checkpoint(epoch, decoder, optimizer_all, lat_vecs, training_loss, experiment, filename=str(epoch))
 
 if __name__ == '__main__':
-    train_decoder()
-    plot_loss('train_decoder', 500)
+    # train_decoder()
+    plot_loss('train_autoencoder', 500)
 
 
 

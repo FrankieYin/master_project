@@ -31,20 +31,12 @@ def evaluate(experiment_directory, checkpoint, data_dir, split_filename):
                     experiment_directory, checkpoint, dataset, class_name, instance_name
                 )
 
-                logging.debug(
-                    'reconstructed mesh is "' + reconstructed_mesh_filename + '"'
-                )
-
                 ground_truth_samples_filename = os.path.join(
                     data_dir,
                     "SurfaceSamples",
                     dataset,
                     class_name,
                     instance_name + ".ply",
-                )
-
-                logging.debug(
-                    "ground truth samples are " + ground_truth_samples_filename
                 )
 
                 normalization_params_filename = os.path.join(
